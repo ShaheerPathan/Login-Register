@@ -1,21 +1,12 @@
 {
-  "name": "auth-backend",
-  "version": "1.0.0",
-  "main": "index.js",
   "type": "module",
   "scripts": {
-    "dev": "node api/auth.js",
-    // "dev": "node index.js"
+    "dev": "vercel dev"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "dotenv": "^16.6.1",
-    "express": "^4.21.2",
-    "jsonwebtoken": "^9.0.2",
-    "mongoose": "^7.8.7"
-  },
-  "description": "",
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+    "express": "^4.18.2",
+    "mongoose": "^7.0.0",
+    "jsonwebtoken": "^9.0.0",
+    "dotenv": "^16.0.0"
+  }
 }

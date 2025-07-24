@@ -1,9 +1,9 @@
+
 {
   "version": 2,
   "builds": [
-    { "src": "api/auth.js", "use": "@vercel/node" }
-  ],
-  "routes": [
+    { "src": "api/*.js", "use": "@vercel/node" }
+  ],"routes": [
     { "src": "/(.*)", "dest": "api/auth.js" }
   ]
 }
