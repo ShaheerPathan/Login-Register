@@ -61,21 +61,132 @@
 
 
 
+// import { connectDB } from "../utils/db.js";
+// import jwt from "jsonwebtoken";
+
+// export default async function handler(req, res) {
+//   await connectDB(); // connect to MongoDB for each request
+
+//   if (req.method === "POST") {
+//     const { username, password } = req.body;
+//     // Dummy auth logic
+//     if (username === "admin" && password === "admin") {
+//       const token = jwt.sign({ user: username }, process.env.JWT_SECRET);
+//       return res.status(200).json({ token });
+//     }
+//     return res.status(401).json({ message: "Invalid credentials" });
+//   }
+
+//   res.status(200).json({ message: "API running..." });
+// }
+
 import { connectDB } from "../utils/db.js";
 import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
+import mongoose from "mongoose";
+
+// User Schema
+const userSchema = new mongoose.Schema({
+  email: { 
+    type: String, 
+    required: true,
+    unique: true,
+    lowercase: true
+  },
+  password: { 
+    type: String, 
+    required: true 
+  }
+}, {
+  timestamps: true
+});
+
+// Create User model (only if it doesn't exist)
+const User = mongoose.models.User || mongoose.model("User", userSchema);
 
 export default async function handler(req, res) {
-  await connectDB(); // connect to MongoDB for each request
+  await connectDB(); // Connect to MongoDB for each request
 
   if (req.method === "POST") {
-    const { username, password } = req.body;
-    // Dummy auth logic
-    if (username === "admin" && password === "admin") {
-      const token = jwt.sign({ user: username }, process.env.JWT_SECRET);
-      return res.status(200).json({ token });
+    const { email, password } = req.body;
+
+    // Validate input
+    if (!email || !password) {
+      return res.status(400).json({ 
+        message: "Email and password are required" 
+      });
     }
-    return res.status(401).json({ message: "Invalid credentials" });
+
+    try {
+      // Check if this is a registration (you can determine this by checking if user exists)
+      const existingUser = await User.findOne({ email: email.toLowerCase() });
+
+      if (!existingUser) {
+        // REGISTRATION - Create new user
+        const hashedPassword = await bcrypt.hash(password, 12);
+        
+        const newUser = new User({
+          email: email.toLowerCase(),
+          password: hashedPassword
+        });
+
+        await newUser.save();
+
+        return res.status(201).json({ 
+          message: "User registered successfully" 
+        });
+
+      } else {
+        // LOGIN - Verify existing user
+        const isPasswordValid = await bcrypt.compare(password, existingUser.password);
+        
+        if (!isPasswordValid) {
+          return res.status(401).json({ 
+            message: "Invalid credentials" 
+          });
+        }
+
+        // Generate JWT token for successful login
+        const token = jwt.sign(
+          { 
+            userId: existingUser._id,
+            email: existingUser.email 
+          }, 
+          process.env.JWT_SECRET,
+          { expiresIn: "24h" }
+        );
+
+        return res.status(200).json({ 
+          message: "Login successful",
+          token 
+        });
+      }
+
+    } catch (error) {
+      console.error("Auth error:", error);
+      
+      // Handle duplicate email error
+      if (error.code === 11000) {
+        return res.status(400).json({ 
+          message: "User with this email already exists" 
+        });
+      }
+
+      return res.status(500).json({ 
+        message: "Internal server error" 
+      });
+    }
   }
 
-  res.status(200).json({ message: "API running..." });
+  // Handle other HTTP methods
+  if (req.method === "GET") {
+    return res.status(200).json({ 
+      message: "Authentication API is running..." 
+    });
+  }
+
+  // Method not allowed
+  return res.status(405).json({ 
+    message: "Method not allowed" 
+  });
 }
