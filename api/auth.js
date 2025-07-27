@@ -85,7 +85,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 
-// User Schema
+// User Schema - define outside the handler
 const userSchema = new mongoose.Schema({
   email: { 
     type: String, 
@@ -101,92 +101,158 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Create User model (only if it doesn't exist)
-const User = mongoose.models.User || mongoose.model("User", userSchema);
+// Avoid re-compilation errors in serverless
+let User;
+try {
+  User = mongoose.model("User");
+} catch (error) {
+  User = mongoose.model("User", userSchema);
+}
 
 export default async function handler(req, res) {
-  await connectDB(); // Connect to MongoDB for each request
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === "POST") {
-    const { email, password } = req.body;
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
-    // Validate input
-    if (!email || !password) {
-      return res.status(400).json({ 
-        message: "Email and password are required" 
-      });
-    }
+  try {
+    // Connect to database
+    await connectDB();
+    
+    if (req.method === "POST") {
+      const { email, password } = req.body;
 
-    try {
-      // Check if this is a registration (you can determine this by checking if user exists)
+      // Validate input
+      if (!email || !password) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Email and password are required" 
+        });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Please provide a valid email address" 
+        });
+      }
+
+      // Validate password length
+      if (password.length < 6) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Password must be at least 6 characters long" 
+        });
+      }
+
+      // Check if user exists
       const existingUser = await User.findOne({ email: email.toLowerCase() });
 
       if (!existingUser) {
         // REGISTRATION - Create new user
-        const hashedPassword = await bcrypt.hash(password, 12);
-        
-        const newUser = new User({
-          email: email.toLowerCase(),
-          password: hashedPassword
-        });
+        try {
+          const hashedPassword = await bcrypt.hash(password, 10);
+          
+          const newUser = new User({
+            email: email.toLowerCase(),
+            password: hashedPassword
+          });
 
-        await newUser.save();
+          await newUser.save();
 
-        return res.status(201).json({ 
-          message: "User registered successfully" 
-        });
+          return res.status(201).json({ 
+            success: true,
+            message: "User registered successfully" 
+          });
+
+        } catch (saveError) {
+          console.error("Registration error:", saveError);
+          
+          // Handle duplicate key error
+          if (saveError.code === 11000) {
+            return res.status(400).json({ 
+              success: false,
+              message: "User with this email already exists" 
+            });
+          }
+          
+          throw saveError;
+        }
 
       } else {
         // LOGIN - Verify existing user
-        const isPasswordValid = await bcrypt.compare(password, existingUser.password);
-        
-        if (!isPasswordValid) {
-          return res.status(401).json({ 
-            message: "Invalid credentials" 
+        try {
+          const isPasswordValid = await bcrypt.compare(password, existingUser.password);
+          
+          if (!isPasswordValid) {
+            return res.status(401).json({ 
+              success: false,
+              message: "Invalid credentials" 
+            });
+          }
+
+          // Check if JWT_SECRET exists
+          if (!process.env.JWT_SECRET) {
+            console.error("JWT_SECRET is not defined");
+            return res.status(500).json({ 
+              success: false,
+              message: "Server configuration error" 
+            });
+          }
+
+          // Generate JWT token for successful login
+          const token = jwt.sign(
+            { 
+              userId: existingUser._id,
+              email: existingUser.email 
+            }, 
+            process.env.JWT_SECRET,
+            { expiresIn: "24h" }
+          );
+
+          return res.status(200).json({ 
+            success: true,
+            message: "Login successful",
+            token 
           });
+
+        } catch (loginError) {
+          console.error("Login error:", loginError);
+          throw loginError;
         }
-
-        // Generate JWT token for successful login
-        const token = jwt.sign(
-          { 
-            userId: existingUser._id,
-            email: existingUser.email 
-          }, 
-          process.env.JWT_SECRET,
-          { expiresIn: "24h" }
-        );
-
-        return res.status(200).json({ 
-          message: "Login successful",
-          token 
-        });
       }
+    }
 
-    } catch (error) {
-      console.error("Auth error:", error);
-      
-      // Handle duplicate email error
-      if (error.code === 11000) {
-        return res.status(400).json({ 
-          message: "User with this email already exists" 
-        });
-      }
-
-      return res.status(500).json({ 
-        message: "Internal server error" 
+    // Handle GET requests
+    if (req.method === "GET") {
+      return res.status(200).json({ 
+        success: true,
+        message: "Authentication API is running...",
+        timestamp: new Date().toISOString()
       });
     }
-  }
 
-  // Handle other HTTP methods
-  if (req.method === "GET") {
-    return res.status(200).json({ 
-      message: "Authentication API is running..." 
+    // Method not allowed
+    return res.status(405).json({ 
+      success: false,
+      message: `Method ${req.method} not allowed` 
+    });
+
+  } catch (error) {
+    console.error("Handler error:", error);
+    
+    // Return generic error response
+    return res.status(500).json({ 
+      success: false,
+      message: "Internal server error",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
-
-  // Method not allowed
-  return res.status(405).json({ 
-    message: "Method not allowed" 
-  });
 }
